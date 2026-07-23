@@ -23,8 +23,8 @@ public class ArcadeDriveRightStick extends LinearOpMode {
 
         // Reverse the left motor so both motors move the robot forward
         // when positive power is applied.
-        leftMotor.setDirection(DcMotor.Direction.REVERSE);
-        rightMotor.setDirection(DcMotor.Direction.FORWARD);
+        leftMotor.setDirection(DcMotor.Direction.FORWARD);
+        rightMotor.setDirection(DcMotor.Direction.REVERSE);
 
         // Use encoders
         leftMotor.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
