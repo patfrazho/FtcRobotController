@@ -50,7 +50,7 @@ public class ArcadeDriveRightStick extends LinearOpMode {
         rightMotor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
 
         // 3. Camera Initialization
-        webcam = hardwareMap.get(WebcamName.class, "Webcam 1");
+        webcam = hardwareMap.get(WebcamName.class, "webcam");
         visionPortal = VisionPortal.easyCreateWithDefaults(webcam);
 
         telemetry.addLine("Initialized - Ready to Start");
