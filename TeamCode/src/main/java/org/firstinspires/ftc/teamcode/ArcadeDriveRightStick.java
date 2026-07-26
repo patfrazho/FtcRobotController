@@ -3,6 +3,10 @@ package org.firstinspires.ftc.teamcode;
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 import com.qualcomm.robotcore.hardware.DcMotor;
+import org.firstinspires.ftc.robotcore.external.hardware.camera.WebcamName;
+import org.firstinspires.ftc.vision.VisionPortal;
+
+import java.util.Locale;
 
 /**
  * Professional Arcade Drive implementation using the right stick.
@@ -21,6 +25,9 @@ public class ArcadeDriveRightStick extends LinearOpMode {
 
     private DcMotor leftMotor;
     private DcMotor rightMotor;
+
+    private WebcamName webcam;
+    private VisionPortal visionPortal;
 
     @Override
     public void runOpMode() {
@@ -42,25 +49,30 @@ public class ArcadeDriveRightStick extends LinearOpMode {
         leftMotor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
         rightMotor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
 
+        // 3. Camera Initialization
+        webcam = hardwareMap.get(WebcamName.class, "Webcam 1");
+        visionPortal = VisionPortal.easyCreateWithDefaults(webcam);
+
         telemetry.addLine("Initialized - Ready to Start");
+        telemetry.addData("Camera Status", "Waiting...");
         telemetry.update();
 
         waitForStart();
 
         while (opModeIsActive()) {
 
-            // 3. Input Capture & Deadzone Logic
+            // 4. Input Capture & Deadzone Logic
             double drive = -gamepad1.right_stick_y;   // Forward/Reverse
             double turn  =  gamepad1.right_stick_x;   // Left/Right
 
             if (Math.abs(drive) < DEADZONE) drive = 0;
             if (Math.abs(turn) < DEADZONE) turn = 0;
 
-            // 4. Arcade Drive Mixing
+            // 5. Arcade Drive Mixing
             double leftPower  = drive + turn;
             double rightPower = drive - turn;
 
-            // 5. Power Normalization
+            // 6. Power Normalization
             // This ensures the turning ratio is preserved even if we hit MAX_POWER
             double max = Math.max(Math.abs(leftPower), Math.abs(rightPower));
             if (max > MAX_POWER) {
@@ -68,17 +80,22 @@ public class ArcadeDriveRightStick extends LinearOpMode {
                 rightPower = (rightPower / max) * MAX_POWER;
             }
 
-            // 6. Send power to motors
+            // 7. Send power to motors
             leftMotor.setPower(leftPower);
             rightMotor.setPower(rightPower);
 
-            // 7. Telemetry for Debugging and Driver Feedback
+            // 8. Telemetry for Debugging and Driver Feedback
             telemetry.addData("Status", "Running");
+            telemetry.addData("Camera Status", visionPortal.getCameraState());
+            telemetry.addData("Camera FPS", String.format(Locale.US, "%.2f", visionPortal.getFps()));
             telemetry.addData("Inputs", "Drive: %.2f, Turn: %.2f", drive, turn);
             telemetry.addData("Powers", "Left: %.2f, Right: %.2f", leftPower, rightPower);
             telemetry.addData("Encoders", "L: %d, R: %d", 
                 leftMotor.getCurrentPosition(), rightMotor.getCurrentPosition());
             telemetry.update();
         }
+
+        // Clean up camera resources
+        visionPortal.close();
     }
 }
