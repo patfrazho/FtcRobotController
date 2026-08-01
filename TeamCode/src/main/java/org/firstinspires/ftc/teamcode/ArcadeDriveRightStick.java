@@ -5,7 +5,10 @@ import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import org.firstinspires.ftc.robotcore.external.hardware.camera.WebcamName;
 import org.firstinspires.ftc.vision.VisionPortal;
+import org.firstinspires.ftc.vision.apriltag.AprilTagDetection;
+import org.firstinspires.ftc.vision.apriltag.AprilTagProcessor;
 
+import java.util.List;
 import java.util.Locale;
 
 /**
@@ -28,6 +31,7 @@ public class ArcadeDriveRightStick extends LinearOpMode {
 
     private WebcamName webcam;
     private VisionPortal visionPortal;
+    private AprilTagProcessor aprilTag;
 
     @Override
     public void runOpMode() {
@@ -51,7 +55,15 @@ public class ArcadeDriveRightStick extends LinearOpMode {
 
         // 3. Camera Initialization
         webcam = hardwareMap.get(WebcamName.class, "webcam");
-        visionPortal = VisionPortal.easyCreateWithDefaults(webcam);
+
+        // Create the AprilTag processor
+        aprilTag = AprilTagProcessor.easyCreateWithDefaults();
+
+        // Create the vision portal using a builder
+        visionPortal = new VisionPortal.Builder()
+                .setCamera(webcam)
+                .addProcessor(aprilTag)
+                .build();
 
         telemetry.addLine("Initialized - Ready to Start");
         telemetry.addData("Camera Status", "Waiting...");
@@ -88,6 +100,22 @@ public class ArcadeDriveRightStick extends LinearOpMode {
             telemetry.addData("Status", "Running");
             telemetry.addData("Camera Status", visionPortal.getCameraState());
             telemetry.addData("Camera FPS", String.format(Locale.US, "%.2f", visionPortal.getFps()));
+
+            // AprilTag detection telemetry
+            List<AprilTagDetection> currentDetections = aprilTag.getDetections();
+            telemetry.addData("# AprilTags Detected", currentDetections.size());
+
+            for (AprilTagDetection detection : currentDetections) {
+                if (detection.metadata != null) {
+                    telemetry.addLine(String.format(Locale.US, "\n==== (ID %d) %s", detection.id, detection.metadata.name));
+                    telemetry.addLine(String.format(Locale.US, "XYZ %6.1f %6.1f %6.1f  (inch)", detection.ftcPose.x, detection.ftcPose.y, detection.ftcPose.z));
+                    telemetry.addLine(String.format(Locale.US, "Bearing %6.1f (deg)", detection.ftcPose.bearing));
+                } else {
+                    telemetry.addLine(String.format(Locale.US, "\n==== (ID %d) Unknown", detection.id));
+                    telemetry.addLine(String.format(Locale.US, "Center %6.0f %6.0f   (pixels)", detection.center.x, detection.center.y));
+                }
+            }
+
             telemetry.addData("Inputs", "Drive: %.2f, Turn: %.2f", drive, turn);
             telemetry.addData("Powers", "Left: %.2f, Right: %.2f", leftPower, rightPower);
             telemetry.addData("Encoders", "L: %d, R: %d", 
