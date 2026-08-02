@@ -6,6 +6,7 @@ import com.qualcomm.robotcore.hardware.DcMotor;
 import org.firstinspires.ftc.robotcore.external.hardware.camera.WebcamName;
 import org.firstinspires.ftc.vision.VisionPortal;
 import org.firstinspires.ftc.vision.apriltag.AprilTagDetection;
+import org.firstinspires.ftc.vision.apriltag.AprilTagGameDatabase;
 import org.firstinspires.ftc.vision.apriltag.AprilTagProcessor;
 
 import java.util.List;
@@ -54,10 +55,12 @@ public class ArcadeDriveRightStick extends LinearOpMode {
         rightMotor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
 
         // 3. Camera Initialization
-        webcam = hardwareMap.get(WebcamName.class, "webcam");
+        webcam = hardwareMap.get(WebcamName.class, "Webcam 1");
 
         // Create the AprilTag processor
-        aprilTag = AprilTagProcessor.easyCreateWithDefaults();
+        aprilTag = new AprilTagProcessor.Builder()
+                .setTagLibrary(AprilTagGameDatabase.getCenterStageTagLibrary())
+                .build();
 
         // Create the vision portal using a builder
         visionPortal = new VisionPortal.Builder()
