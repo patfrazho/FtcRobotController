@@ -25,13 +25,13 @@ public class ArcadeDriveAutonomous extends LinearOpMode {
     private static final String RIGHT_MOTOR_NAME = "right motor";
 
     // Driving Constants
-    private static final double MAX_AUTO_SPEED = 0.30; // Slower for precision
-    private static final double TURN_P_GAIN = 0.02;     // Proportional gain for turning
-    private static final double DRIVE_P_GAIN = 0.03;    // Proportional gain for driving
+    private static final double MAX_AUTO_SPEED = 0.30; 
+    private static final double TURN_P_GAIN = 0.02;     
+    private static final double DRIVE_P_GAIN = 0.03;    
     private static final double BEARING_THRESHOLD = 1.0;
-    private static final double TARGET_DISTANCE = 12.0; // Target distance in inches
+    private static final double TARGET_DISTANCE = 12.0; 
     private static final double DISTANCE_THRESHOLD = 0.5;
-    private static final double SEARCH_SPEED = 0.08;    // Slow rotation speed for searching
+    private static final double SEARCH_SPEED = 0.06;    // Very slow for better detection
 
     private DcMotor leftMotor;
     private DcMotor rightMotor;
@@ -51,8 +51,9 @@ public class ArcadeDriveAutonomous extends LinearOpMode {
         leftMotor.setDirection(DcMotor.Direction.FORWARD);
         rightMotor.setDirection(DcMotor.Direction.REVERSE);
 
-        leftMotor.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
-        rightMotor.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
+        // Use RUN_WITHOUT_ENCODER to match working TeleOp
+        leftMotor.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
+        rightMotor.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
 
         leftMotor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
         rightMotor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
@@ -61,10 +62,11 @@ public class ArcadeDriveAutonomous extends LinearOpMode {
         webcam = hardwareMap.get(WebcamName.class, "Webcam 1");
 
         aprilTag = new AprilTagProcessor.Builder()
+                .setTagLibrary(AprilTagGameDatabase.getCenterStageTagLibrary())
                 .build();
 
-        // Max sensitivity (1.0 = highest, 3.0 = default)
-        aprilTag.setDecimation(1);
+        // Use default decimation (3.0) for higher FPS
+        aprilTag.setDecimation(3);
 
         visionPortal = new VisionPortal.Builder()
                 .setCamera(webcam)
@@ -76,10 +78,9 @@ public class ArcadeDriveAutonomous extends LinearOpMode {
 
         waitForStart();
         
-        // Ensure camera is actually streaming before moving
+        // Wait for camera to be ready
         while (opModeIsActive() && visionPortal.getCameraState() != VisionPortal.CameraState.STREAMING) {
             telemetry.addData("Status", "Waiting for camera...");
-            telemetry.addData("Camera State", visionPortal.getCameraState());
             telemetry.update();
             sleep(20);
         }
@@ -91,8 +92,8 @@ public class ArcadeDriveAutonomous extends LinearOpMode {
             List<AprilTagDetection> currentDetections = aprilTag.getDetections();
             AprilTagDetection targetTag = null;
 
-            // Diagnostic: Count any detections (even those without metadata)
             int rawCount = currentDetections.size();
+            telemetry.addData("# Tags Seen", rawCount);
 
             // Find the first valid detection with metadata
             for (AprilTagDetection detection : currentDetections) {
@@ -106,58 +107,44 @@ public class ArcadeDriveAutonomous extends LinearOpMode {
                 double bearing = targetTag.ftcPose.bearing;
                 double range = targetTag.ftcPose.range;
                 
-                telemetry.addLine(String.format(Locale.US, "AprilTag Detected: ID %d, Bearing: %.2f deg", targetTag.id, bearing));
-                telemetry.addLine(String.format(Locale.US, "Range: %.2f inches", range));
+                telemetry.addLine(String.format(Locale.US, "Target Found: ID %d", targetTag.id));
+                telemetry.addLine(String.format(Locale.US, "Bearing: %.2f deg, Range: %.2f in", bearing, range));
 
-                // Calculate error
                 double rangeError = range - TARGET_DISTANCE;
 
                 if (Math.abs(bearing) <= BEARING_THRESHOLD && Math.abs(rangeError) <= DISTANCE_THRESHOLD) {
-                    // Within threshold - stop
                     leftMotor.setPower(0);
                     rightMotor.setPower(0);
                     aligned = true;
                     telemetry.addLine("STATUS: TARGET REACHED!");
                 } else {
-                    // Drive and Turn towards the tag
                     double drive = rangeError * DRIVE_P_GAIN;
                     double turn  = bearing * TURN_P_GAIN;
 
-                    // Clip to max speed
-                    drive = com.qualcomm.robotcore.util.Range.clip(drive, -MAX_AUTO_SPEED, MAX_AUTO_SPEED);
-                    turn  = com.qualcomm.robotcore.util.Range.clip(turn, -MAX_AUTO_SPEED, MAX_AUTO_SPEED);
+                    drive = Range.clip(drive, -MAX_AUTO_SPEED, MAX_AUTO_SPEED);
+                    turn  = Range.clip(turn, -MAX_AUTO_SPEED, MAX_AUTO_SPEED);
 
-                    // Combine drive and turn
-                    double leftPower  = drive + turn;
-                    double rightPower = drive - turn;
-
-                    // Send power to motors
-                    leftMotor.setPower(leftPower);
-                    rightMotor.setPower(rightPower);
-                    
+                    leftMotor.setPower(drive + turn);
+                    rightMotor.setPower(drive - turn);
                     telemetry.addData("Status", "Approaching...");
                 }
-            } else if (rawCount > 0) {
-                // Tag is seen but metadata is missing - STOP to get a clear frame
-                leftMotor.setPower(0);
-                rightMotor.setPower(0);
-                telemetry.addData("Status", "Tag seen! Identifying...");
             } else {
-                // No tag detected - search by rotating slowly
+                // No recognized tag - search slowly
                 leftMotor.setPower(SEARCH_SPEED);
                 rightMotor.setPower(-SEARCH_SPEED);
-                telemetry.addData("Status", "Searching for AprilTag...");
-                telemetry.addData("Camera State", visionPortal.getCameraState());
+                telemetry.addData("Status", "Searching...");
+                if (rawCount > 0) {
+                    telemetry.addLine("Tag detected but ID not in CenterStage library!");
+                }
             }
 
             telemetry.update();
-            sleep(10); // Small delay to avoid hammering the CPU
+            sleep(10);
         }
 
         telemetry.addLine("Autonomous Complete");
         telemetry.update();
-
-        // Clean up camera resources
         visionPortal.close();
+        sleep(5000);
     }
 }
