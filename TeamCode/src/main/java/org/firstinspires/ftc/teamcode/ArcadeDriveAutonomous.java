@@ -5,6 +5,8 @@ import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.util.Range;
 import org.firstinspires.ftc.robotcore.external.hardware.camera.WebcamName;
+import org.firstinspires.ftc.robotcore.external.hardware.camera.controls.ExposureControl;
+import org.firstinspires.ftc.robotcore.external.hardware.camera.controls.GainControl;
 import org.firstinspires.ftc.vision.VisionPortal;
 import org.firstinspires.ftc.vision.apriltag.AprilTagDetection;
 import org.firstinspires.ftc.vision.apriltag.AprilTagGameDatabase;
@@ -12,10 +14,11 @@ import org.firstinspires.ftc.vision.apriltag.AprilTagProcessor;
 
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.TimeUnit;
 
 /**
- * Autonomous OpMode that searches for an AprilTag and aligns the robot to it.
- * The robot rotates until the AprilTag bearing is between -1.0 and 1.0 degrees.
+ * Professional Autonomous OpMode for AprilTag alignment.
+ * Uses manual exposure control to eliminate motion blur during search.
  */
 @Autonomous(name = "Arcade Drive Autonomous", group = "Drive")
 public class ArcadeDriveAutonomous extends LinearOpMode {
@@ -25,13 +28,13 @@ public class ArcadeDriveAutonomous extends LinearOpMode {
     private static final String RIGHT_MOTOR_NAME = "right motor";
 
     // Driving Constants
-    private static final double MAX_AUTO_SPEED = 0.30; 
-    private static final double TURN_P_GAIN = 0.02;     
-    private static final double DRIVE_P_GAIN = 0.03;    
-    private static final double BEARING_THRESHOLD = 1.0;
+    private static final double MAX_AUTO_SPEED = 0.35; 
+    private static final double TURN_P_GAIN = 0.025;    
+    private static final double DRIVE_P_GAIN = 0.035;   
+    private static final double BEARING_THRESHOLD = 5.0;
     private static final double TARGET_DISTANCE = 12.0; 
-    private static final double DISTANCE_THRESHOLD = 0.5;
-    private static final double SEARCH_SPEED = 0.06;    // Very slow for better detection
+    private static final double DISTANCE_THRESHOLD = 1.0;
+    private static final double SEARCH_SPEED = 0.15;    // Higher to overcome motor friction
 
     private DcMotor leftMotor;
     private DcMotor rightMotor;
@@ -47,104 +50,136 @@ public class ArcadeDriveAutonomous extends LinearOpMode {
         leftMotor = hardwareMap.get(DcMotor.class, LEFT_MOTOR_NAME);
         rightMotor = hardwareMap.get(DcMotor.class, RIGHT_MOTOR_NAME);
 
-        // 2. Motor Configuration
         leftMotor.setDirection(DcMotor.Direction.FORWARD);
         rightMotor.setDirection(DcMotor.Direction.REVERSE);
 
-        // Use RUN_WITHOUT_ENCODER to match working TeleOp
         leftMotor.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
         rightMotor.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
 
         leftMotor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
         rightMotor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
 
-        // 3. Camera Initialization
+        // 2. Camera Initialization
         webcam = hardwareMap.get(WebcamName.class, "Webcam 1");
 
         aprilTag = new AprilTagProcessor.Builder()
                 .setTagLibrary(AprilTagGameDatabase.getCenterStageTagLibrary())
                 .build();
 
-        // Use default decimation (3.0) for higher FPS
-        aprilTag.setDecimation(3);
+        aprilTag.setDecimation(2);
 
         visionPortal = new VisionPortal.Builder()
                 .setCamera(webcam)
                 .addProcessor(aprilTag)
                 .build();
 
-        telemetry.addLine("Initialized - Ready for Autonomous Alignment");
+        telemetry.addLine("Initialized - Setting Camera Controls...");
         telemetry.update();
 
+        // 3. Manual Exposure Setup (Crucial for eliminating blur)
+        setManualExposure(6, 250); 
+
         waitForStart();
-        
-        // Wait for camera to be ready
-        while (opModeIsActive() && visionPortal.getCameraState() != VisionPortal.CameraState.STREAMING) {
-            telemetry.addData("Status", "Waiting for camera...");
-            telemetry.update();
-            sleep(20);
-        }
 
         boolean aligned = false;
+        AprilTagDetection lastDetection = null;
 
         while (opModeIsActive() && !aligned) {
 
             List<AprilTagDetection> currentDetections = aprilTag.getDetections();
             AprilTagDetection targetTag = null;
 
-            int rawCount = currentDetections.size();
-            telemetry.addData("# Tags Seen", rawCount);
-
-            // Find the first valid detection with metadata
+            // Search for recognized tags
             for (AprilTagDetection detection : currentDetections) {
                 if (detection.metadata != null) {
                     targetTag = detection;
+                    lastDetection = detection;
                     break;
                 }
             }
 
             if (targetTag != null) {
+                // TAG FOUND - Drive to Target
                 double bearing = targetTag.ftcPose.bearing;
                 double range = targetTag.ftcPose.range;
-                
-                telemetry.addLine(String.format(Locale.US, "Target Found: ID %d", targetTag.id));
-                telemetry.addLine(String.format(Locale.US, "Bearing: %.2f deg, Range: %.2f in", bearing, range));
-
                 double rangeError = range - TARGET_DISTANCE;
 
+                telemetry.addLine(String.format(Locale.US, "Target ID %d: Bearing %.1f, Range %.1f", 
+                        targetTag.id, bearing, range));
+
+                //stopMotors();
+                //sleep(10000);
+
                 if (Math.abs(bearing) <= BEARING_THRESHOLD && Math.abs(rangeError) <= DISTANCE_THRESHOLD) {
-                    leftMotor.setPower(0);
-                    rightMotor.setPower(0);
+                    stopMotors();
                     aligned = true;
                     telemetry.addLine("STATUS: TARGET REACHED!");
                 } else {
-                    double drive = rangeError * DRIVE_P_GAIN;
-                    double turn  = bearing * TURN_P_GAIN;
-
-                    drive = Range.clip(drive, -MAX_AUTO_SPEED, MAX_AUTO_SPEED);
-                    turn  = Range.clip(turn, -MAX_AUTO_SPEED, MAX_AUTO_SPEED);
+                    double drive = Range.clip(rangeError * DRIVE_P_GAIN, -MAX_AUTO_SPEED, MAX_AUTO_SPEED);
+                    double turn  = Range.clip(bearing * TURN_P_GAIN, -MAX_AUTO_SPEED, MAX_AUTO_SPEED);
 
                     leftMotor.setPower(drive + turn);
                     rightMotor.setPower(drive - turn);
-                    telemetry.addData("Status", "Approaching...");
+                    telemetry.addData("Status", "Aligning to Tag...");
                 }
+            } else if (currentDetections.size() > 0) {
+                // UNKNOWN TAG - Stop and wait for identification
+                stopMotors();
+                telemetry.addLine("Tag Detected - Identifying...");
             } else {
-                // No recognized tag - search slowly
+                // SEARCHING - Rotate slowly
                 leftMotor.setPower(SEARCH_SPEED);
                 rightMotor.setPower(-SEARCH_SPEED);
-                telemetry.addData("Status", "Searching...");
-                if (rawCount > 0) {
-                    telemetry.addLine("Tag detected but ID not in CenterStage library!");
-                }
+                telemetry.addData("Status", "Searching (Scan Mode)...");
             }
 
             telemetry.update();
-            sleep(10);
+            sleep(20);
         }
 
-        telemetry.addLine("Autonomous Complete");
-        telemetry.update();
+        // Final Result Display
+        while (opModeIsActive()) {
+            telemetry.addLine("Autonomous Complete - Results:");
+            if (lastDetection != null) {
+                telemetry.addLine(String.format(Locale.US, "Final Tag ID: %d", lastDetection.id));
+                telemetry.addLine(String.format(Locale.US, "Final Bearing: %.2f deg", lastDetection.ftcPose.bearing));
+                telemetry.addLine(String.format(Locale.US, "Final Range: %.2f in", lastDetection.ftcPose.range));
+            }
+            telemetry.update();
+            idle();
+        }
+
         visionPortal.close();
-        sleep(5000);
+    }
+
+    private void stopMotors() {
+        leftMotor.setPower(0);
+        rightMotor.setPower(0);
+    }
+
+    /*
+     Sets camera to manual exposure mode to eliminate motion blur.
+     This is the most effective way to improve AprilTag detection while moving.
+    */
+    private void setManualExposure(int exposureMS, int gain) {
+        if (visionPortal == null) return;
+
+        // Wait for camera to open
+        while (!isStopRequested() && (visionPortal.getCameraState() != VisionPortal.CameraState.STREAMING)) {
+            sleep(20);
+        }
+
+        if (!isStopRequested()) {
+            ExposureControl exposureControl = visionPortal.getCameraControl(ExposureControl.class);
+            if (exposureControl.getMode() != ExposureControl.Mode.Manual) {
+                exposureControl.setMode(ExposureControl.Mode.Manual);
+                sleep(50);
+            }
+            exposureControl.setExposure((long)exposureMS, TimeUnit.MILLISECONDS);
+            sleep(20);
+            GainControl gainControl = visionPortal.getCameraControl(GainControl.class);
+            gainControl.setGain(gain);
+            sleep(20);
+        }
     }
 }
