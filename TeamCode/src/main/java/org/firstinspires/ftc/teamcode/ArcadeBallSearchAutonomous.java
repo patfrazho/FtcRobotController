@@ -1,5 +1,7 @@
 package org.firstinspires.ftc.teamcode;
 
+import android.graphics.Color;
+import android.util.Size;
 import com.qualcomm.robotcore.eventloop.opmode.Autonomous;
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.hardware.DcMotor;
@@ -8,19 +10,18 @@ import org.firstinspires.ftc.robotcore.external.hardware.camera.WebcamName;
 import org.firstinspires.ftc.robotcore.external.hardware.camera.controls.ExposureControl;
 import org.firstinspires.ftc.robotcore.external.hardware.camera.controls.GainControl;
 import org.firstinspires.ftc.vision.VisionPortal;
-import org.firstinspires.ftc.vision.apriltag.AprilTagDetection;
-import org.firstinspires.ftc.vision.apriltag.AprilTagGameDatabase;
-import org.firstinspires.ftc.vision.apriltag.AprilTagProcessor;
+import org.firstinspires.ftc.vision.opencv.ColorBlobLocatorProcessor;
+import org.firstinspires.ftc.vision.opencv.ColorRange;
+import org.firstinspires.ftc.vision.opencv.ImageRegion;
 
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Professional Autonomous OpMode for AprilTag alignment.
- * Uses manual exposure control to eliminate motion blur during search.
+ * Autonomous OpMode that searches for a cluster of yellow balls and aligns the robot to them.
  */
-@Autonomous(name = "Arcade Drive Autonomous", group = "Drive")
+@Autonomous(name = "Arcade Ball Search Autonomous", group = "Drive")
 public class ArcadeBallSearchAutonomous extends LinearOpMode {
 
     // Hardware Configuration Constants
@@ -29,19 +30,22 @@ public class ArcadeBallSearchAutonomous extends LinearOpMode {
 
     // Driving Constants
     private static final double MAX_AUTO_SPEED = 0.35; 
-    private static final double TURN_P_GAIN = 0.025;    
-    private static final double DRIVE_P_GAIN = 0.035;   
-    private static final double BEARING_THRESHOLD = 5.0;
-    private static final double TARGET_DISTANCE = 12.0; 
-    private static final double DISTANCE_THRESHOLD = 1.0;
-    private static final double SEARCH_SPEED = 0.15;    // Higher to overcome motor friction
+    private static final double TURN_P_GAIN = 0.005;    // Adjusted for pixel-based error
+    private static final double DRIVE_P_GAIN = 0.002;   // Adjusted for area-based error
+    private static final double BEARING_THRESHOLD = 10.0; // Pixels from center
+    private static final double TARGET_BLOB_AREA = 5000.0; // Proxy for distance
+    private static final double AREA_THRESHOLD = 500.0;
+    private static final double SEARCH_SPEED = 0.15;
+
+    private static final int IMAGE_WIDTH = 320;
+    private static final int IMAGE_HEIGHT = 240;
 
     private DcMotor leftMotor;
     private DcMotor rightMotor;
 
     private WebcamName webcam;
     private VisionPortal visionPortal;
-    private AprilTagProcessor aprilTag;
+    private ColorBlobLocatorProcessor colorLocator;
 
     @Override
     public void runOpMode() {
@@ -62,75 +66,78 @@ public class ArcadeBallSearchAutonomous extends LinearOpMode {
         // 2. Camera Initialization
         webcam = hardwareMap.get(WebcamName.class, "Webcam 1");
 
-        aprilTag = new AprilTagProcessor.Builder()
-                .setTagLibrary(AprilTagGameDatabase.getCenterStageTagLibrary())
+        colorLocator = new ColorBlobLocatorProcessor.Builder()
+                .setTargetColorRange(ColorRange.YELLOW)
+                .setContourMode(ColorBlobLocatorProcessor.ContourMode.EXTERNAL_ONLY)
+                .setRoi(ImageRegion.entireFrame())
+                .setDrawContours(true)
+                .setBlurSize(5)
                 .build();
-
-        aprilTag.setDecimation(2);
 
         visionPortal = new VisionPortal.Builder()
                 .setCamera(webcam)
-                .addProcessor(aprilTag)
+                .addProcessor(colorLocator)
+                .setCameraResolution(new Size(IMAGE_WIDTH, IMAGE_HEIGHT))
                 .build();
 
         telemetry.addLine("Initialized - Setting Camera Controls...");
         telemetry.update();
 
-        // 3. Manual Exposure Setup (Crucial for eliminating blur)
+        // 3. Manual Exposure Setup
         setManualExposure(6, 250); 
 
         waitForStart();
 
         boolean aligned = false;
-        AprilTagDetection lastDetection = null;
 
         while (opModeIsActive() && !aligned) {
 
-            List<AprilTagDetection> currentDetections = aprilTag.getDetections();
-            AprilTagDetection targetTag = null;
+            List<ColorBlobLocatorProcessor.Blob> blobs = colorLocator.getBlobs();
+            
+            // Filter out small noise blobs
+            ColorBlobLocatorProcessor.Util.filterByCriteria(
+                    ColorBlobLocatorProcessor.BlobCriteria.BY_CONTOUR_AREA,
+                    100, 20000, blobs);
 
-            // Search for recognized tags
-            for (AprilTagDetection detection : currentDetections) {
-                if (detection.metadata != null) {
-                    targetTag = detection;
-                    lastDetection = detection;
-                    break;
-                }
+            ColorBlobLocatorProcessor.Blob targetBlob = null;
+            if (!blobs.isEmpty()) {
+                // The list is sorted by area by default, so index 0 is the largest
+                targetBlob = blobs.get(0);
             }
 
-            if (targetTag != null) {
-                // TAG FOUND - Drive to Target
-                double bearing = targetTag.ftcPose.bearing;
-                double range = targetTag.ftcPose.range;
-                double rangeError = range - TARGET_DISTANCE;
+            if (targetBlob != null) {
+                // BLOB FOUND - Drive to Target
+                double centerX = targetBlob.getBoxFit().center.x;
+                double area = targetBlob.getContourArea();
+                
+                // Bearing error in pixels from center
+                double bearingError = centerX - (IMAGE_WIDTH / 2.0);
+                // Area error (proxy for distance)
+                double areaError = TARGET_BLOB_AREA - area;
 
-                telemetry.addLine(String.format(Locale.US, "Target ID %d: Bearing %.1f, Range %.1f", 
-                        targetTag.id, bearing, range));
+                telemetry.addLine("Yellow Ball Cluster Detected!");
+                telemetry.addData("Center X", "%.1f", centerX);
+                telemetry.addData("Area", "%.1f", area);
 
-                //stopMotors();
-                //sleep(10000);
-
-                if (Math.abs(bearing) <= BEARING_THRESHOLD && Math.abs(rangeError) <= DISTANCE_THRESHOLD) {
+                if (Math.abs(bearingError) <= BEARING_THRESHOLD && Math.abs(areaError) <= AREA_THRESHOLD) {
                     stopMotors();
                     aligned = true;
                     telemetry.addLine("STATUS: TARGET REACHED!");
                 } else {
-                    double drive = Range.clip(rangeError * DRIVE_P_GAIN, -MAX_AUTO_SPEED, MAX_AUTO_SPEED);
-                    double turn  = Range.clip(bearing * TURN_P_GAIN, -MAX_AUTO_SPEED, MAX_AUTO_SPEED);
+                    // Turn to align (bearingError > 0 means blob is right, need positive turn)
+                    double turn = Range.clip(bearingError * TURN_P_GAIN, -MAX_AUTO_SPEED, MAX_AUTO_SPEED);
+                    // Drive to align distance (areaError > 0 means too far, need positive drive)
+                    double drive = Range.clip(areaError * DRIVE_P_GAIN, -MAX_AUTO_SPEED, MAX_AUTO_SPEED);
 
                     leftMotor.setPower(drive + turn);
                     rightMotor.setPower(drive - turn);
-                    telemetry.addData("Status", "Aligning to Tag...");
+                    telemetry.addData("Status", "Aligning to Cluster...");
                 }
-            } else if (currentDetections.size() > 0) {
-                // UNKNOWN TAG - Stop and wait for identification
-                stopMotors();
-                telemetry.addLine("Tag Detected - Identifying...");
             } else {
                 // SEARCHING - Rotate slowly
                 leftMotor.setPower(SEARCH_SPEED);
                 rightMotor.setPower(-SEARCH_SPEED);
-                telemetry.addData("Status", "Searching (Scan Mode)...");
+                telemetry.addData("Status", "Searching for Yellow Balls...");
             }
 
             telemetry.update();
@@ -139,12 +146,7 @@ public class ArcadeBallSearchAutonomous extends LinearOpMode {
 
         // Final Result Display
         while (opModeIsActive()) {
-            telemetry.addLine("Autonomous Complete - Results:");
-            if (lastDetection != null) {
-                telemetry.addLine(String.format(Locale.US, "Final Tag ID: %d", lastDetection.id));
-                telemetry.addLine(String.format(Locale.US, "Final Bearing: %.2f deg", lastDetection.ftcPose.bearing));
-                telemetry.addLine(String.format(Locale.US, "Final Range: %.2f in", lastDetection.ftcPose.range));
-            }
+            telemetry.addLine("Autonomous Complete - Cluster Found");
             telemetry.update();
             idle();
         }
